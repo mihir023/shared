@@ -1,0 +1,76 @@
+import os
+import re
+import yaml
+import pandas as pd
+
+BASE_DIR = r"C:\AtomicRedTeam\atomics"
+OUTPUT_FILE = r"C:\AtomicRedTeam\atomic_red_team_report.xlsx"
+
+results = []
+
+def replace_placeholders(command, input_args):
+    if not command:
+        return ""
+    pattern = r"#\{(.*?)\}"
+    def replacer(match):
+        key = match.group(1)
+        if key in input_args:
+            return str(input_args[key].get("default", f"<{key}>"))
+        return f"<{key}>"
+    return re.sub(pattern, replacer, command)
+
+yaml_files_count = 0
+
+for root, dirs, files in os.walk(BASE_DIR):
+    dirs[:] = [d for d in dirs if d.lower() != "indexes"]
+    for file in files:
+        if file.endswith((".yaml", ".yml")):
+            yaml_files_count += 1
+            file_path = os.path.join(root, file)
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    docs = list(yaml.safe_load_all(f))
+            except Exception as e:
+                print(f"Skipping {file_path}: {e}")
+                continue
+
+            for data in docs:
+                if not isinstance(data, dict):
+                    continue
+                technique = data.get("attack_technique", "")
+                display_name = data.get("display_name", "")
+                atomic_tests = data.get("atomic_tests", [])
+
+                for test in atomic_tests:
+                    test_name = test.get("name", "")
+                    input_args = test.get("input_arguments", {})
+                    supported_platforms = ", ".join(test.get("supported_platforms", []))
+
+                    executor = test.get("executor", {})
+                    raw_command = executor.get("command", "")
+                    raw_cleanup = executor.get("cleanup_command", "")
+                    executor_name = executor.get("name", "")
+
+                    command = replace_placeholders(raw_command, input_args)
+                    cleanup = replace_placeholders(raw_cleanup, input_args)
+
+                    results.append({
+                        "MITRE Technique ID": technique,
+                        "Display Name": display_name,
+                        "Test Name": test_name,
+                        "Supported Platforms": supported_platforms,
+                        "Executor": executor_name,
+                        "Command Executed": command,
+                        "Cleanup Command": cleanup
+                    })
+
+print(f"Total YAML files processed: {yaml_files_count}")
+print(f"Total commands extracted: {len(results)}")
+
+if results:
+    df = pd.DataFrame(results)
+    df.to_excel(OUTPUT_FILE, index=False)
+    print(f"✅ Report generated at: {OUTPUT_FILE}")
+    display(df.head(10))
+else:
+    print("❌ No data extracted. Check folder path or YAML parsing.")
